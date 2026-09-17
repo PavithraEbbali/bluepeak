@@ -650,6 +650,46 @@ check that matters.
 
 ---
 
+## [1.5.0] Mobile pass, repository, deployment
+
+**Mobile audit across 320, 390 and 768.** Ran an element-by-element scan at each
+width checking for unclipped overflow, sub-12px text and undersized tap targets,
+rather than eyeballing screenshots. Page-level overflow was already clean; two
+real defects surfaced.
+
+- **Tap targets.** Seventeen links measured under 40px tall, the footer
+  navigation worst at **17px** — those anchors were inline, so their hit area was
+  just the text box. They are now `inline-flex min-h-[40px]`, the phone number
+  44px, and the legal row 36px. The list spacing came down to compensate so the
+  footer did not grow. Seventeen became one.
+- **The last one** was the phone link inside the availability sentence, an inline
+  link in running prose. Making it 40px tall would have broken the line box, so
+  it takes vertical padding instead: padding on an inline element expands the
+  clickable area without affecting layout.
+- **Type floor.** The smallest label was 9.5px (the logo kicker). Lifted to
+  10.5px on phones, held at 9.5px from `sm` up. Nothing renders below 10px on
+  mobile now.
+
+**Animation cost on phones.** The ambient discs were 560px wide with a 100px
+blur radius — real GPU work on a phone. Below `sm` they drop to ~300px with a
+55px blur. Same effect, a fraction of the raster area.
+
+**Vercel readiness.** `metadataBase` was pinned to `https://example.com`, which
+would have pointed every social card at a placeholder domain. It now reads
+`NEXT_PUBLIC_SITE_URL`, falling back to Vercel's own `VERCEL_URL` so preview
+deployments resolve correctly with no configuration. No `vercel.json` is needed;
+Next.js is detected automatically.
+
+`next-env.d.ts` was removed from `.gitignore` — `tsconfig.json` references it, so
+a fresh clone should have it.
+
+**Repository.** Initialised on `main` and pushed to
+`github.com/PavithraEbbali/bluepeak`, which was empty, so nothing was
+overwritten. 48 files; `node_modules`, `.next` and the `_source-images` PNG
+originals are all excluded. Remote and local HEAD both at `d4ab827`.
+
+---
+
 ## Verification results
 
 - `tsc --noEmit` — clean
