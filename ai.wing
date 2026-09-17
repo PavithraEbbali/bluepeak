@@ -690,6 +690,46 @@ originals are all excluded. Remote and local HEAD both at `d4ab827`.
 
 ---
 
+## [1.5.1] Vercel deployment returning 404
+
+`bluepeak-two.vercel.app` served `404 NOT_FOUND` at the root. Probing several
+paths rather than just the homepage located it immediately:
+
+| path | result |
+|---|---|
+| `/images/hero-connected-home.jpg` | **200** |
+| `/` | 404 |
+| `/_next/static/...` | 404 |
+| `/favicon.ico` | 404 |
+
+Static files from `public/` are being served while **no `_next` output exists at
+all**, so the Next.js build was never run — the project is being published as a
+plain static site.
+
+**Ruled out on the repository side.** Checked the two things that genuinely
+differ between a Windows working copy and Vercel's Linux builders:
+
+- every `@/` import resolved with exact case across all 29 source files (a case
+  mismatch builds fine on Windows and fails on Linux);
+- all seven images are committed, at the paths `lib/content.ts` references.
+
+Auto-detection signals are all present at the repository root: `next` in
+`dependencies`, `next.config.mjs`, `app/`, and `package.json` with
+`"build": "next build"`.
+
+**Most likely cause: Root Directory set to `public`.** That single setting
+explains every observation — the static root becomes `public/`, so
+`/images/hero-connected-home.jpg` resolves, `/` finds no `index.html`, and
+nothing Next.js-shaped is ever built. An "Other" framework preset with Output
+Directory `public` produces identical symptoms.
+
+Added `vercel.json` declaring `"framework": "nextjs"`, since settings there take
+precedence over the dashboard. **Note the caveat:** Vercel reads `vercel.json`
+from the configured Root Directory, so if the root really is set to `public`,
+this file will not be read and the setting has to be corrected in the dashboard.
+
+---
+
 ## Verification results
 
 - `tsc --noEmit` — clean
