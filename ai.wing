@@ -1,0 +1,680 @@
+# ai.wing — Bluepeak Authorized Retailer
+
+Changelog and architecture record for this site. Every significant structural
+change, feature addition and architectural decision gets an entry here so work
+can be tracked and reverted cleanly.
+
+Newest entries at the bottom.
+
+---
+
+## [0.1.0] Initial build — scaffold and toolchain
+
+**Stack**
+- Next.js 15.5.25 (App Router) + React 19 + TypeScript 5.7 (strict)
+- Tailwind CSS 3.4 with a hand-built token layer
+- framer-motion 11.18 for animation, lenis 1.1 for smooth scroll
+- No backend, no database, no API routes. Strict front-end build.
+
+**Decisions**
+- Scaffolded by hand rather than with `create-next-app`. The project directory
+  name contains a space, which `create-next-app` rejects as an npm package
+  name.
+- Pinned Next to **15.5.25** rather than 15.1.6. The 15.1.x line carries
+  CVE-2025-66478; 15.5.25 is the patched release on the `backport` tag. Stayed
+  on the 15.x line rather than jumping to 16.x to avoid a major-version
+  migration mid-build.
+- ESLint is not installed and `.eslintrc.json` was removed. `tsc --noEmit` is
+  the type gate; `next build` is the correctness gate.
+
+---
+
+## [0.2.0] Brand extraction from mybluepeak.com
+
+`mybluepeak.com` returns 403 to the fetch proxies and to the in-app browser, but
+serves normal HTML to `curl` with a browser User-Agent. It also rate-limits
+after roughly one request, so pages were pulled one at a time.
+
+**Palette** — lifted verbatim from the site's published theme tokens
+(`--wp--preset--color--*`), not eyeballed from screenshots:
+
+| Token | Hex | Use here |
+|---|---|---|
+| navy-blue | `#060048` | dominant brand navy, dark sections, header CTA |
+| dark-blue | `#0a109d` | royal accent, gradients |
+| blue | `#034fab` | mid blue, gradients |
+| teal | `#008dbb` | **primary CTA and accent** |
+| yellow | `#ebab32` | energetic accent |
+| light-gray | `#f3f3ed` | warm off-white section background |
+| gray | `#e7e6dc` | chips, hairlines |
+| white | `#FFFFFF` | cards, body |
+
+**Typography** — Bluepeak uses **Sharp Sans**, which is commercially licensed
+and not redistributable. Substituted **Figtree** (Google Fonts, self-hosted via
+`next/font`), the closest open match in weight, width and geometry.
+
+**Logo** — deliberately an original mark (three ascending strands forming a
+peak), not a reproduction of Bluepeak's own logo. "Authorized Retailer" is
+locked to the wordmark wherever it appears.
+
+---
+
+## [0.3.0] Service-line audit — what Bluepeak actually sells
+
+Audited the residential navigation on mybluepeak.com. "For Home" contains
+exactly: Fiber Internet, Whole-Home Wi-Fi, Moving, TV.
+
+| Line | Verdict | Reasoning |
+|---|---|---|
+| **Fiber** | INCLUDED | 1 Gig / 2 Gig / 5 Gig, symmetrical |
+| **Cable** | OMITTED | No separately sold residential cable tier; fiber-to-the-home is the residential product |
+| **Bundles** | INCLUDED | Internet + TV is genuinely sold; no published bundle price |
+| **TV** | INCLUDED | My Locals / + Favorites / + More, plus Bluepeak Stream |
+| **Mobile** | OMITTED | Bluepeak sells no mobile or wireless plan |
+| **Phone** | OMITTED | Hosted Voice is a **business** product; no residential phone offering |
+
+Third-party comparison sites (cabletv.com, compareinternet.com) claim Bluepeak
+sells no TV at all. That is wrong — `mybluepeak.com/tv/` lists three live
+packages. Official site wins over aggregators on every disputed fact.
+
+Omitted lines are removed entirely rather than stubbed. No "call to ask" cards,
+no empty placeholders.
+
+**Verified plan data**
+- 1 Gig — $55/mo, 1-year price lock
+- 2 Gig — $75/mo, 2-year price lock
+- 5 Gig — $100/mo, 5-year price lock
+- All: symmetrical, modem + eero included, unlimited data, no annual contract,
+  free installation when ordered online
+- Autopay required for advertised rates: $10/mo bank (ACH), $5/mo credit card
+- Add-ons: Service Protection +$3/mo, eero Plus +$9/mo, Advanced Wi-Fi +$15/mo
+- TV: My Locals 14+, + Favorites 78+, + Favorites + More 136+ — **no published
+  pricing**, which is why those cards read "Call for pricing"
+- Footprint: ND, SD, MN, OK, TX, WY — 31 named communities
+
+Two figures circulating on aggregator sites were **deliberately excluded**
+because they could not be confirmed on the official site: a $2.70/mo network
+maintenance fee, and $70/$115 unreturned-equipment fees. Unverified numbers do
+not belong in a pricing disclosure.
+
+---
+
+## [0.4.0] Centralised data architecture — `lib/content.ts`
+
+Single source of truth. Nothing about a plan is written in a `.tsx` file.
+
+**Core model** — `PlanItem` carries `id`, `name`, `serviceLine`, `speedDown`,
+`speedUp`, `price`, `cents`, `promoQualifier`, `equipmentFee`, `dataPolicy`,
+`contractTerm`, `features`, `isPopular`, plus optional presentation extras
+(`tagline`, `bestFor`, `channelCount`, `priceLock`, `badge`).
+
+**The cascade layer** — derived exports, not duplicated data:
+
+- `plansByLine(line)` — plans for one service line
+- `activeServiceLines` — canonical order, filtered to lines that *have* plans.
+  This is the mechanism that removes Cable, Mobile and Phone from the page and
+  from the nav simultaneously. Add a plan with `serviceLine: 'phone'` and a
+  Phone section appears in the right position with no layout edit.
+- `heroPlan` — cheapest priced plan, drives the hero anchor
+- `topSpeedGbps` — computed from the lineup, used in the hero subline, the
+  metadata description and the FAQ
+- `navLinks` / `footerColumns` — generated from `activeServiceLines`
+- `finePrint.columns` / `.rows` — the entire comparison table is generated from
+  the fiber plans, so it cannot drift from the cards
+- `legal.disclosures` — the pricing disclosure string is assembled from the
+  actual plan prices
+- `ctaLabelFor(plan)` — the single rule deciding CTA text
+
+**To change a price:** edit the `price` field in `lib/content.ts`. It updates
+the hero lockup, the plan card, the comparison table and the footer legal
+disclosure at once. Nothing else needs touching.
+
+---
+
+## [0.5.0] `<PriceLockup />` — the universal price renderer
+
+One component renders every price on the site: hero anchor, plan cards,
+hero lineup list. Visual flex row of `$` + dominant integer + muted cents +
+muted `/mo`.
+
+- Dominant integer held inside the 2.5rem–3.5rem band at all breakpoints via
+  `clamp()` across three sizes (`hero`, `card`, `compact`)
+- `$` and cents are baseline-offset against the integer, not centred
+- A plan with no `price` renders a "Call for pricing" lockup instead — this is
+  what the TV and bundle cards use
+- Screen readers get the figure as one `sr-only` sentence rather than
+  fragmented digits
+
+---
+
+## [0.6.0] Animation system
+
+`SiteMotion` wraps the app: Lenis smooth scroll plus framer-motion's
+`LazyMotion` with the `domAnimation` bundle only. Everything animated is an
+`m.*` element rather than `motion.*`, which keeps roughly 25kb of gzipped JS off
+the critical path.
+
+| Effect | Where | Implementation |
+|---|---|---|
+| Lenis smooth scroll | global | dynamic `import('lenis')`, rAF loop, anchor clicks routed through `lenis.scrollTo` |
+| Black-hole / fiber field | hero | canvas; strands spiral into a core, accelerating and streaking as they fall |
+| Scroll-scrubbed assembly | how-it-works | `NetworkAssembly` — fiber, wall terminal, modem, eero and devices assemble strictly as a function of scroll |
+| SVG path draw | same | `pathLength` scrubbed off `scrollYProgress` |
+| Travelling data pulse | same | CSS `stroke-dashoffset` keyframe, zero JS |
+| Scroll-triggered text reveal | headings | `WordReveal`, per-word mask reveal |
+| Staggered grid entrance | all card grids | `StaggerGroup` / `StaggerItem` variants |
+| Parallax depth | hero, coverage | `useScroll` + `useTransform` |
+| Clip-path wipe | section boundaries | `ClipWipe`, slanted top edge levels out on scroll |
+| 3D card tilt | plan cards | `TiltCard`, pointer-tracked rotate + specular glare |
+| Magnetic buttons | CTAs | `MagneticButton`, spring-follows-cursor |
+| Infinite marquee | hero ticker | pure CSS, duplicated track translated -50% |
+
+**Performance guards**
+- Canvas: DPR capped at 1.5, strand count scales with viewport, rAF loop halts
+  via IntersectionObserver when off-screen, single static frame under reduced
+  motion
+- Tilt and magnetic effects are `pointerType === 'mouse'` only, so touch
+  scrolling is never hijacked
+- Every effect is inert under `prefers-reduced-motion`
+- Footer is a server component and ships no JS
+
+---
+
+## [0.7.0] Page assembly
+
+Canonical order, enforced in `app/page.tsx`:
+
+1. Top disclosure bar — persistent, non-dismissable, inside the fixed chrome so
+   it never scrolls away
+2. Sticky header — logo, anchor nav, solid call button
+3. Hero — eyebrow, H1, subline, `<PriceLockup />`, **ZIP checker *and* call
+   button**, trust chips
+4. Service lines via `activeServiceLines` → Fiber, Bundles, TV. Tone alternates
+   light/dark automatically by index, so the rhythm survives adding or removing
+   a line.
+5. Honest fine-print grid (`#details`) + add-ons (`#addons`)
+6. How it works / why us (`#why`), then service area (`#coverage`)
+7. FAQ (`#faq`)
+8. Footer (`#legal`)
+
+`#coverage` is an addition, placed between "why us" and the FAQ. It does not
+reorder any of the required sections.
+
+**Footer** follows the structure of bestfiberinternet.us — four columns (Plans /
+Details / Help / Talk to a human), retailer lockup and description, a disclosure
+block, then a bottom bar of legal links and copyright — rendered dark. That
+site's "Pricing current as of <date>" line and its "Retailer vs. ordering
+direct" link were **not** carried over; both are forbidden here.
+
+**ZIP checker** validates a 5-digit ZIP and hands off to a call. It does not
+claim an availability result, because there is no lookup service behind it and
+inventing one would be both false and a policy problem.
+
+---
+
+## [0.8.0] Negative constraints — verified
+
+| Constraint | Status |
+|---|---|
+| No support-routing copy ("for account, billing or outage support…") | Absent |
+| Hero keeps **both** ZIP checker and call button | Both present |
+| Plan/section CTAs say "Call to order" | Enforced by `ctaLabelFor()` |
+| Unpriced plans say "Call for pricing" | TV + bundles, automatically |
+| Raw phone number as button text only in navbar/footer | Header CTA and footer only |
+| No competitor bashing or self-deprecating copy | Absent |
+| No sections for services Bluepeak does not sell | Cable/Mobile/Phone omitted at the data layer |
+| No "See Bluepeak's official Broadband Facts label" link | Absent |
+| No "Pricing observed <date>" strings | Absent |
+| No "Is this the official Bluepeak site?" FAQ | Absent |
+| `data-call-cta` on every `tel:` link | Enforced centrally |
+| Zero horizontal overflow to 320px | Verified |
+
+---
+
+## [0.9.0] Bug fixes during build
+
+**`WordReveal` deadlock (fixed).** Each word started translated 105% below its
+own `overflow-hidden` mask. IntersectionObserver accounts for ancestor clipping,
+so an observer attached to the word measured a zero-area intersection, never
+fired, and left every headline permanently invisible — a self-sustaining
+deadlock. Fixed by hoisting the viewport trigger to the unclipped wrapper and
+driving the words as variant children. Verified in-browser: words settle to
+`transform: none`.
+
+**Motion component identity (fixed).** `Reveal`/`StaggerGroup` originally called
+`m(tag)` during render, minting a new component type every pass and remounting
+the subtree. Replaced with a proxy lookup (`m.div`, `m.ul`, …), which
+framer-motion memoises.
+
+**Display type scale (fixed).** The original `clamp(2.75rem, 8vw, 5.5rem)` put
+the hero headline on six lines at 1024px. Rescaled the display sizes and moved
+the hero's two-column split from `lg` to `xl` so the columns are only side by
+side when there is room. Headline now lands on three lines.
+
+**Type conflicts (fixed).** Dropped React's drag/animation handler props from
+`MagneticButton`'s forwarded surface, where they collide with framer-motion's
+same-named gesture handlers. Added `ol` to the `MotionTag` union.
+
+**Hero divider (fixed).** The rule between the price anchor and top-speed stat
+now hides below `sm`, where the two stats stack.
+
+**Plan card title (fixed).** Badge padding is applied only to cards that have a
+badge, so unbadged titles use the full card width.
+
+---
+
+## [1.0.0] Client revision — white theme, exact brand shades, copy pass
+
+Requested changes after the first review of the build.
+
+**Hero background animation removed.** The `FiberField` canvas is gone from the
+hero and `components/visuals/FiberField.tsx` is deleted rather than orphaned.
+The hero is now a plain white surface with no canvas, no grid overlay and no
+parallax layer. The only motion left in it is the copy revealing on entry.
+
+**How-it-works diagram removed.** `NetworkAssembly` is gone and its file is
+deleted. "Three steps to installation" is now a clean three-column step list
+with a rule above each step, so the section carries no scroll-scrubbed diagram,
+no SVG path draw and no travelling pulse. The `.fiber-pulse` keyframe that fed
+it was deleted from `globals.css` along with it.
+
+Removing both cut the page bundle from 25.2 kB to 21.7 kB (143 kB to 139 kB
+first load).
+
+**White theme on exact Bluepeak shades.** Every dark section was converted to
+white or `#f3f3ed`, and the palette now follows how mybluepeak.com actually uses
+its own tokens rather than inverting them:
+
+| Element | Shade | Token |
+|---|---|---|
+| Page and hero background | `#ffffff` | white |
+| Alternating sections | `#f3f3ed` | light-gray |
+| Headings, disclosure bar, footer | `#060048` | navy-blue |
+| Featured plan card | `#0a109d` | dark-blue |
+| All action buttons | `#008dbb` | teal |
+| Badges, accent rule, step markers | `#ebab32` | yellow |
+
+Confirmed in the browser by reading computed styles: every one of those resolves
+to the exact hex above.
+
+Card treatment now mirrors the live site — white cards across the row with the
+featured plan inverted onto royal blue, a gold badge, a price-lock pill and the
+same teal button on every card. A gold rule was added under the sticky header to
+match the accent bar on mybluepeak.com.
+
+Sections alternate white and `#f3f3ed`, and the clip-path wipe moved onto the
+muted sections, where the angled top edge is visible against the white section
+above it.
+
+**Copy professionalised.** All headings rewritten, and the two section intros
+that were called out with them:
+
+| Before | After |
+|---|---|
+| Fiber internet built for your modern life. | Fiber internet engineered for the connected home. |
+| Symmetrical fiber, priced in plain English | Fiber internet plans with transparent pricing |
+| Put internet and TV on one bill | Internet and TV on one monthly bill |
+| Live TV and your streaming apps, together | Live television and streaming in one experience |
+| What it costs, line by line | Complete pricing and inclusions |
+| Add-ons, if you want them | Optional service add-ons |
+| Three steps, one phone call | Three steps to installation |
+| Built on fiber, sold without the asterisks | A fiber network built for consistent performance |
+| Where Bluepeak builds | Bluepeak service areas |
+
+The FAQ heading went from "The things people ask before ordering" to
+"Frequently asked questions" as well — not on the list, but it was the last
+conversational heading left and would have clashed with the rest.
+
+Section copy that was still hardcoded in `FinePrint.tsx` moved into
+`finePrintCopy` and `addOnsCopy` in `lib/content.ts`, and the benefits block
+gained `benefitsEyebrow` / `benefitsHeading` / `benefitsIntro`, so no heading is
+stranded in a layout file any more.
+
+**Service area rebuilt.** The chip-covered state cards are gone. It is now a
+two-column section: a stat strip (states served, communities, FTTH) and a call
+CTA on the left, and a single bordered directory on the right with one row per
+state, a gold rule under each state name, and communities set as running text.
+States sort by size, so the largest footprint leads instead of a one-city state.
+On phones the stat strip becomes value/label rows, because three columns put the
+labels on top of each other at 320px.
+
+**Fixes made during this pass**
+- A JSX comment placed as a sibling root inside a `.map()` callback is a syntax
+  error; moved it above the callback.
+- Stat labels collided at 320px; the strip now stacks, with `flex-row-reverse`
+  and `sm:flex-col-reverse` keeping each value ahead of its label while `dt`
+  still precedes `dd` in the markup.
+
+**Tooling note:** running `next build` while `next dev` is live corrupts the
+shared `.next` directory and takes the dev server down with webpack module
+errors. Stop the dev server (or use a separate output dir) before building.
+
+---
+
+## [1.1.0] Client revision — gold speed gauge, hero, coverage
+
+Second review raised four things: the hero lineup card was weak, the hero read
+as generic, the coverage boxes still looked wrong, and the gold was barely
+visible. One idea addresses all four.
+
+**`SpeedGauge` (new).** Bluepeak's own plan cards use a half-round dial with a
+gold arc that fills in proportion to the tier. Rebuilt here as
+`components/visuals/SpeedGauge.tsx`: an SVG half-arc whose fill is
+`speedMbps / topSpeedMbps`, so 1 Gig reads as a short sweep and 5 Gig fills the
+dial. The arc draws once on entry and is static under reduced motion. This is
+now the main carrier of `#ebab32` across the site.
+
+The maximum is derived, not hardcoded — `topSpeedMbps` in `lib/content.ts` — so
+adding a faster tier rescales every dial on the page automatically.
+
+**Hero rebuilt.** The plain three-row lineup list is gone. The right column is
+now a featured plan card on royal blue carrying the gold dial, a gold badge, the
+price lockup and the top inclusions, with its own CTA. The left column gained a
+clearer two-stat hierarchy — "Plans from $55.00/mo" against "Up to 5 Gig" — with
+a rule separating the pitch from the ZIP form.
+
+Which plan is featured comes from `featuredPlan` in `lib/content.ts` (the fiber
+tier flagged `isPopular`, falling back to the lead plan), so moving the flag
+moves the hero card.
+
+**Gold spread across the page.** Beyond the dials: the tick that opens every
+section eyebrow, the ticker bullets, the header rule, plan badges, the step
+rules in "Three steps to installation", the stat markers and state markers in
+the service area, and the separators between community names. Ten components
+now carry it, against three before.
+
+**Service area rebuilt again.** The first attempt failed for a structural
+reason: the directory was squeezed into a `0.85fr / 1.15fr` split, so Oklahoma's
+nineteen communities had roughly half the page to wrap into and looked cramped
+however they were styled. It is now full-width — heading and CTA on one line, a
+three-up stat band, then one full-width row per state with a gold marker, the
+community count right-aligned, and the communities as running text underneath.
+
+**Fixes made during this pass**
+- The community list had no line-break opportunities. Each city sat in a
+  `whitespace-nowrap` span with no whitespace between spans, so Oklahoma's row
+  was one unbreakable 1,400px line that ran past the shell. The separators now
+  carry real spaces (`{' · '}`) and the row wraps to two lines.
+- The price lock was printed twice on every fiber card — once as a feature and
+  once as the pill beneath. The list now filters out the entry matching
+  `plan.priceLock`.
+- The hero card had a "Most chosen plan" eyebrow directly above a "Most popular"
+  badge. Dropped the eyebrow.
+
+---
+
+## [1.2.0] Photography
+
+Seven images delivered and wired in. They arrived as PNGs at 1408x768 rather
+than the per-slot ratios in `IMAGE-BRIEF.md`, which is fine — each slot sets its
+own aspect ratio and uses `object-position` to choose what survives the crop.
+
+**Weight.** The PNGs totalled **47 MB**, all inside `public/`, which Next.js
+deploys wholesale. Re-encoded to mozjpeg q82 they come to **808 KB** for all
+seven, a 98% reduction with no visible loss. The originals were moved to
+`_source-images/` (gitignored) so they stay on disk but never ship.
+
+**Delivery.** Everything goes through `next/image`, so each photo is re-encoded
+to AVIF at the size the device actually requests — the hero comes down to about
+**27 KB at 1200px wide**. The hero image carries `priority`; every other image
+lazy-loads. `next.config.mjs` sets AVIF/WebP and a one-year cache TTL.
+
+**Placement**
+
+| Image | Slot |
+|---|---|
+| `hero-connected-home` | Hero, right column, with the featured plan card overlapping its lower edge |
+| `bundle-internet-and-tv` | Beside the "Internet and TV on one monthly bill" heading |
+| `tv-evening-viewing` | Beside the "Live television and streaming" heading |
+| `install-technician` | Two-up panel closing "Three steps to installation" |
+| `wifi-equipment` | Beside the "A fiber network built for consistent performance" heading |
+| `coverage-neighborhood` | Full-width 5:2 band in the service area |
+| `og-share` | Open Graph and Twitter card metadata |
+
+Paths and alt text live together in `images` in `lib/content.ts`, so a swapped
+photo cannot keep a description that no longer matches it. `sectionImages` maps
+service lines to photos, which is what makes `PlanSection` switch to its
+two-column heading layout for bundles and TV while fiber stays text-only.
+
+**Gemini watermark — cropped, on the owner's instruction.** Six of the seven
+carried Google's visible sparkle in the bottom-right corner; `install-technician`
+was clean. Flagged rather than actioned at first, because removing a provenance
+mark is the owner's call. They asked for the crop.
+
+**150px came off the right edge** of the six, taking them to 1258x768;
+`install-technician` was left whole at 1408x768. Re-encoded from the original
+PNGs rather than from the already-compressed JPEGs, so there is no second
+generation loss. Every bottom-right corner was re-inspected afterwards to
+confirm the sparkle was actually outside the new frame rather than assumed to
+be. All seven are clean. Total on disk: **736 KB**.
+
+Two knock-on corrections the reframe forced:
+
+- The frames are now 1.638:1 rather than 1.833:1, so anything anchored by
+  fraction shifted. `wifi-equipment` moved its router from roughly 66% of the
+  frame to 74%, and its `objectPosition` went to 70% to follow it. That image is
+  used as a full-bleed section background, where horizontal cropping actually
+  happens, so it mattered.
+- The Open Graph `width` in `app/layout.tsx` still declared 1408 and is now
+  1258. A wrong declared size makes link previews letterbox.
+
+**Watch out when replacing an image in place.** Next's image optimizer caches by
+URL, and the URL does not change when the file behind it does — the dev server
+kept serving the pre-crop frames, which showed up as a served aspect of 1.834
+against a source of 1.638. Clearing `.next` fixes it. A production build is
+unaffected, since it starts from an empty cache.
+
+---
+
+## [1.3.0] Photographic sections, hero rebuild, availability
+
+**`PhotoBackdrop` (new).** Full-bleed photographic section background: the image
+at `-z-20`, a navy scrim at `-z-10`, content above. The scrim is load-bearing,
+not decoration — every one of these sections sets white text over a photograph.
+
+Two modes. `left` weights the darkness to one side for the hero, where the copy
+occupies one column and the photograph should stay visible in the other. `even`
+washes the whole frame for sections whose content spans the full width. Both
+fall back to an even wash below `lg`, because the left-weighted version only
+makes sense once the copy has its own column — on a phone the content spans the
+full width and would have run onto the bright side of the gradient.
+
+**Hero rebuilt.** The previous version put a photo panel in the right column
+with the plan card overlapping it, and the card was tall enough to cover most of
+the photo — the reason it read as broken. Now the photograph is the hero's
+full-bleed background, the copy sits on near-solid navy on the left, and the
+plan card is a compact white card floating on the right: dial, name, price, CTA,
+nothing else. The feature list moved out; it already appears on the plans below.
+
+**Photographic sections.** `tv` and the "Why Bluepeak fiber" block now carry
+their photograph as the whole section background. A service line can declare its
+own treatment through `tone` on `serviceLineMeta` (`white` | `muted` | `photo`),
+and anything that does not declare one falls back to the alternating white and
+muted rhythm, so the page keeps working if a line is added or removed.
+
+**Availability rebuilt.** Checked the two reference sites, and neither carries a
+service-area directory at all: bestfiberinternet.us leads with "See what's
+available at your address" plus a ZIP field and "Free to check · No obligation ·
+Or call", and kineticfiber.us has no coverage section, routing everything to the
+phone. Both are right — a visitor wants an answer about *their* address, not a
+list of towns, which is why two attempts at presenting 31 communities as a
+browsable list both read as filler.
+
+The section is now the ZIP check, centred over the neighbourhood photograph,
+with the footprint reduced to three stats and the communities kept as one quiet
+line for local search.
+
+**Copy**
+
+| Before | After |
+|---|---|
+| Fiber internet engineered for the connected home. | High-speed fiber internet for the modern home. |
+| Fiber internet plans with transparent pricing | Fiber internet plans and pricing |
+
+**Fix during this pass.** The first `even` scrim was 86–94% opaque navy, which
+buried the photograph so completely that the TV section rendered as a flat navy
+block. Now 70–86% on desktop, 84–92% on mobile.
+
+**Third scrim mode, `soft`.** Even at 70% the wash over "Why Bluepeak fiber"
+was too heavy, because that photograph is a bright hallway and the white text
+needed the cover. Rather than trade one against the other, the contrast moved
+onto the content: the benefit cards became opaque (`bg-navy/80` with a 12px
+backdrop blur), which freed the section scrim to drop to **82% at the top, 24%
+through the middle** — the heading stays protected, and the photograph reads
+everywhere else. That is the rule for `soft`: only use it where the content
+below carries its own backing.
+
+**Hero rebuilt again, as a split.** The full-bleed-with-scrim version was still
+wrong, for three reasons that compounded: the scrim had to be heavy enough to
+carry white text, which left the photograph as a dark blur; the plan card was
+full height, which pushed the section past two screens; and the resulting shape
+— big type left, floating card right — is the stock template.
+
+Splitting the frame fixes all three at once. The photograph now runs full-bleed
+down the right 46% **with no scrim over it at all**, so it is seen at full
+strength, and the copy sits on solid navy where contrast was never in question.
+A feathered gradient at the seam resolves one into the other. The plan moved
+from a full-height card into a short horizontal bar — dial, name, price, CTA in
+a row — which is what brings the hero back to a single screen: **956px against
+a 900px viewport, down from over two screens.**
+
+`SpeedGauge` gained a `compact` variant for that bar. The oversized "Plans from
+/ Up to" number block became one dense line of text.
+
+On small screens the split stacks: navy copy panel, then the photograph as a 5:3
+band beneath it.
+
+**Hero photograph corrected, and untinted.** Two problems, one of them a real
+geometry mistake on my part. The source is 1.83:1 and the desktop column is
+portrait, so only about a third of the frame's width survives the crop —
+`objectPosition` at 58% put that third on the empty wall to the left of the
+subjects rather than on the subjects themselves. It is now 70%, which holds both
+figures in shot. The mobile band is 5:3, close to the source's own ratio, so it
+needs far less repositioning and sits at 60%.
+
+Every tint was removed: the `bg-navy/15` wash and the feathered seam gradient
+are gone on desktop, and the top fade is gone on mobile. The split is a clean
+edge and the photograph is shown exactly as delivered.
+
+Because the seam is now hard, the copy column is capped at
+`min(560px,46vw)` and the photograph narrowed to 42%, so text can never run
+underneath it. Measured at both ends: 74px of clearance at 1024, 106px at 1340.
+
+**Headline highlight.** "fiber internet" is picked out of the hero headline in
+Bluepeak gold, tying the type back to the dials and badges. `WordReveal` gained
+an optional `highlight` prop that locates the phrase within the split words and
+colours only those, so the per-word mask animation is untouched. Matching
+ignores punctuation and case, and a phrase that is not found is simply ignored
+rather than throwing — the headline and the phrase both live in `lib/content.ts`
+(`hero.headlineHighlight`), so they can drift apart when copy is edited.
+
+**Featured plan highlighted.** The hero's plan bar is ringed in
+`#ebab32` with a deeper drop shadow and a larger badge, so it reads as the pick
+rather than as another white panel.
+
+**Hero photograph made full-bleed, shading switched to neutral black.** The
+split put the photograph on 42% of the frame; it now covers the whole hero, edge
+to edge, and the separate mobile band is gone — one image element instead of
+two.
+
+The shading could not simply be deleted, and the reason is measurable rather
+than a matter of taste. Sampling the source across five vertical bands gives
+luminance **155, 120, 116, 100, 94** from left to right: its brightest region is
+the window at the far left, which is exactly where the copy sits. White text on
+that reads at roughly **2.8:1** and fails WCAG AA.
+
+So the shading stayed but lost its hue. It is now pure `rgba(0,0,0,…)` with no
+blue component at all, weighted left on desktop and even below `lg`. The
+photograph darkens without tinting and keeps its own colour — the warm greys and
+skin tones stay warm, which is what the navy scrim had been destroying. Over the
+bright left band the composite lands near luminance 19, about **17:1** against
+white.
+
+If the photograph is ever regenerated, one with a darker or emptier left third
+would allow the shading to come down further.
+
+**Hero call CTA removed.** The duplicate "Call to order" button and the
+"Speak to a person now" hours line are gone from the hero's left column. The
+original brief required the hero to hold both a ZIP checker and a call button,
+and it still does — the featured plan card in the hero carries a "Call to order"
+CTA, verified in the rendered DOM.
+
+**Known limit.** The source images are 1408x768. Used as full-bleed backgrounds
+they upscale on displays wider than about 1400px. The scrim hides it, but larger
+sources would be better if these are ever regenerated.
+
+---
+
+## [1.4.0] Ambient motion
+
+Two additions, both deliberately cheap. The earlier hero canvas and the
+scroll-scrubbed diagram were removed for being heavy and gimmicky, so neither of
+these introduces a canvas, a timer or any per-frame JavaScript.
+
+**Hero — `HeroBackdrop` (new).** Two layers of motion on the photograph, and
+neither touches its colour:
+
+- a slow Ken Burns push-in (`scale(1.06)` to `scale(1.16)` with a small drift)
+  running as a CSS animation, 26s, alternating;
+- a scroll parallax, so the frame travels 14% slower than the copy over it.
+
+They sit on **separate elements on purpose**. Both animate `transform`, and one
+would silently overwrite the other on a shared node. The push-in starts already
+scaled so the frame never exposes an edge as it drifts.
+
+**Light sections — `AmbientShades` (new).** Three heavily blurred brand-tinted
+discs — teal, royal, gold — drifting behind the content on 30s, 38s and 34s
+cycles. Applied to the five light sections: fiber, bundles, the fine-print grid,
+"how it works" and the FAQ. The photographic sections are left alone, since they
+already carry an image.
+
+Only `transform` animates, so this stays on the compositor and never triggers
+layout or paint. Opacity is held low (0.14–0.25 before blur) so it reads as tint
+in the paper rather than as decoration competing with the cards.
+
+Stacked by document order rather than negative z-index: the parent clips with
+`overflow-hidden` and the section's own content follows in a `relative` wrapper.
+A negative z-index would have painted the discs behind the section's own
+background colour and made them invisible — the same trap the first `PhotoBackdrop`
+scrim fell into from the other direction.
+
+**Verified in the browser rather than assumed:** `ken-burns / 26s` on the hero
+image, `drift-a / 30s` and `drift-b / 38s` on the shades, five sections carrying
+them, every disc clipped by an `overflow-hidden` ancestor, and 17 animations
+running. All four keyframes are present in the production CSS.
+
+Horizontal overflow at 320px re-checked afterwards: still none. The discs are
+wider than their sections by design and show up in an element-by-element scan,
+exactly as the marquee track does; `scrollWidth === clientWidth === 320` is the
+check that matters.
+
+---
+
+## Verification results
+
+- `tsc --noEmit` — clean
+- `next build` — succeeds, route `/` prerendered static, **146 kB** first-load JS
+- Images: 808 kB on disk for seven photos, served as AVIF (hero ~27 kB at 1200px)
+- Horizontal overflow at 320px — none (`scrollWidth === clientWidth === 320`),
+  with zero offending elements outside the clipped marquee track
+- Brand shades verified from computed styles: `#ffffff`, `#f3f3ed`, `#060048`,
+  `#0a109d`, `#008dbb`, `#ebab32`
+- Hero contains no `<canvas>`; no install diagram remains in the DOM
+- Every `tel:` link carries `data-call-cta`
+- Cascade verified: changing a price in `lib/content.ts` updates the hero, the
+  cards, the comparison table and the footer disclosure together
+
+---
+
+## Known follow-ups for the owner
+
+- **Replace the placeholder phone number.** `site.phoneDisplay` /
+  `site.phoneHref` in `lib/content.ts` are set to `(888) 555-0142`, a reserved
+  fictional number. One edit updates the header, hero, every CTA and the footer.
+- `metadataBase` in `app/layout.tsx` is `https://example.com`. Point it at the
+  real domain before launch so OG URLs resolve.
+- Legal links in the footer are anchors to the disclosure block. Point them at
+  real policy pages once those exist.
+- Re-audit pricing against mybluepeak.com periodically; the $10-off-for-six-
+  months promotion running at build time was scheduled to end 30 Sep 2026 and is
+  not represented in the plan data.

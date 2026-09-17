@@ -1,0 +1,208 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==========================================================================
+   Bluepeak retailer design tokens
+   Palette values mirror mybluepeak.com's published theme tokens.
+   ========================================================================== */
+
+:root {
+  --bp-navy: #060048;
+  --bp-royal: #0a109d;
+  --bp-ocean: #034fab;
+  --bp-teal: #008dbb;
+  --bp-sun: #ebab32;
+  --bp-bone: #f3f3ed;
+  --bp-gray: #e7e6dc;
+
+  --header-h: 64px;
+  --shell: 1200px;
+}
+
+@layer base {
+  * {
+    @apply border-navy/10;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+    /* Anchor targets clear the sticky header + disclosure bar. */
+    scroll-padding-top: calc(var(--header-h) + 44px);
+  }
+
+  /* Lenis drives scrolling once mounted; hand control over to it cleanly. */
+  html.lenis,
+  html.lenis body {
+    height: auto;
+  }
+
+  .lenis.lenis-smooth {
+    scroll-behavior: auto !important;
+  }
+
+  .lenis.lenis-stopped {
+    overflow: hidden;
+  }
+
+  body {
+    @apply bg-white text-navy antialiased;
+    font-feature-settings: 'ss01', 'cv05', 'kern';
+    /* Belt and braces against sideways scroll on narrow phones. */
+    overflow-x: clip;
+  }
+
+  ::selection {
+    background-color: var(--bp-teal);
+    color: #fff;
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--bp-teal);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+}
+
+@layer components {
+  .shell {
+    width: 100%;
+    max-width: var(--shell);
+    margin-inline: auto;
+    /* 16px gutter holds down to 320px with no horizontal overflow. */
+    padding-inline: clamp(1rem, 4vw, 2.5rem);
+  }
+
+  .eyebrow {
+    @apply inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em];
+  }
+
+  /* Cards -------------------------------------------------------------- */
+  .card {
+    @apply relative rounded-2xl border border-navy/10 bg-white shadow-card;
+  }
+
+  .card-dark {
+    @apply relative rounded-2xl border border-white/10 bg-white/[0.04] shadow-card;
+  }
+
+  /* Buttons ------------------------------------------------------------ */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full text-[15px] font-bold
+           leading-none transition-[transform,box-shadow,background-color,color]
+           duration-300 ease-brand will-change-transform;
+    padding: 0.95rem 1.6rem;
+    min-height: 48px;
+  }
+
+  .btn-primary {
+    @apply bg-teal-500 text-white shadow-glow hover:bg-teal-600;
+  }
+
+  .btn-navy {
+    @apply bg-navy text-white hover:bg-royal-600;
+  }
+
+  .btn-ghost {
+    @apply border-2 border-navy/15 bg-white text-navy hover:border-navy/40;
+  }
+
+  .btn-ghost-dark {
+    @apply border-2 border-white/25 bg-transparent text-white hover:border-white/60 hover:bg-white/5;
+  }
+
+  /* Trust chip --------------------------------------------------------- */
+  .chip {
+    @apply inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10
+           px-3.5 py-2 text-[13px] font-semibold text-white backdrop-blur-sm;
+  }
+
+  .chip-light {
+    @apply inline-flex items-center gap-2 rounded-full border border-navy/10 bg-bone
+           px-3.5 py-2 text-[13px] font-semibold text-navy;
+  }
+
+  /* Section rhythm ----------------------------------------------------- */
+  .section {
+    @apply relative py-20 sm:py-24 lg:py-28;
+  }
+
+  .hairline {
+    @apply h-px w-full bg-gradient-to-r from-transparent via-navy/12 to-transparent;
+  }
+}
+
+@layer utilities {
+  .text-gradient-brand {
+    background: linear-gradient(92deg, var(--bp-teal) 0%, var(--bp-ocean) 55%, var(--bp-royal) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .mask-fade-x {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 8%,
+      #000 92%,
+      transparent
+    );
+    mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
+  }
+
+  .grid-lines {
+    background-image: linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+    background-size: 64px 64px;
+  }
+
+  /* Clip-path wipe used on major section boundaries. */
+  .wipe-top {
+    clip-path: polygon(0 var(--wipe, 0%), 100% 0, 100% 100%, 0 100%);
+  }
+}
+
+/* Marquee halves sit side by side; translating -50% loops seamlessly. */
+.marquee-track {
+  display: flex;
+  width: max-content;
+  will-change: transform;
+}
+
+/* The .fiber-pulse keyframe lived here for the install diagram, which was
+   removed along with the hero canvas. Nothing references it any more. */
+
+/* ==========================================================================
+   Respect reduced motion: kill transforms, keep everything legible.
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .marquee-track {
+    transform: none !important;
+  }
+}
