@@ -724,9 +724,31 @@ nothing Next.js-shaped is ever built. An "Other" framework preset with Output
 Directory `public` produces identical symptoms.
 
 Added `vercel.json` declaring `"framework": "nextjs"`, since settings there take
-precedence over the dashboard. **Note the caveat:** Vercel reads `vercel.json`
-from the configured Root Directory, so if the root really is set to `public`,
-this file will not be read and the setting has to be corrected in the dashboard.
+precedence over the dashboard.
+
+**Resolved.** That push triggered a rebuild and the site came up ~75 seconds
+later. Which also corrects the hypothesis above: the Root Directory was *not*
+the problem. Vercel reads `vercel.json` from the Root Directory, so the file
+being read at all proves the root was correct. The real cause was the **framework
+preset** — the project was set to "Other" (or detection never ran), so Vercel
+skipped `next build` and published `public/` as a static site. Declaring the
+framework in `vercel.json` overrode it.
+
+Verified against the live deployment from the server side:
+
+| check | result |
+|---|---|
+| `/` | 200, `X-Nextjs-Prerender: 1`, `X-Vercel-Cache: HIT` |
+| HTML | 162 KB, carrying the headline, plan names, both CTA labels and the retailer disclosure |
+| `/_next/image` | 200 `image/avif` at w=640/1200/1920 |
+| `/_next/static/css/...` | 200, 38 KB |
+| `/images/*.jpg` | 200 `image/jpeg` |
+
+One note for future debugging: reading the live page through the in-app browser
+reported `naturalWidth: 0` and zero running animations, which looked like broken
+images and dead CSS. Fetching the same URLs directly showed all of them healthy.
+Those readings were an artefact of the pane on a remote origin, not the
+deployment — worth checking server-side before acting on them.
 
 ---
 
